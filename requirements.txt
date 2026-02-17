@@ -1,0 +1,4 @@
+flask
+schedule
+beautifulsoup4
+requests
