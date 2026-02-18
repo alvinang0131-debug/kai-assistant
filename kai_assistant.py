@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, request
+from flask import Flask, render_template_string, request, jsonify
 import smtplib
 from email.message import EmailMessage
 import schedule
@@ -9,6 +9,7 @@ import requests
 from bs4 import BeautifulSoup
 import webbrowser
 from datetime import datetime
+import os
 
 # ------------------------
 # Flask app setup
@@ -65,11 +66,11 @@ def research_topic(topic):
         return f"❌ Sorry Andrew, I couldn’t fetch research: {e}"
 
 # ------------------------
-# Play Song (Browser)
+# Play Song (Browser safe)
 # ------------------------
 def play_song(query):
-    webbrowser.open(f"https://www.youtube.com/results?search_query={query}")
-    return f"🎵 Hey Andrew, I opened YouTube for '{query}'. Enjoy!"
+    # Return clickable link instead of opening browser
+    return f"🎵 Click to play on YouTube: https://www.youtube.com/results?search_query={query.replace(' ', '+')}"
 
 # ------------------------
 # Task Scheduler
@@ -126,18 +127,10 @@ HTML_TEMPLATE = '''
 '''
 
 # ------------------------
-# Flask Routes
+# Command Parsing Logic
 # ------------------------
-@app.route('/', methods=['GET'])
-def index():
-    return HTML_TEMPLATE
-
-@app.route('/command', methods=['POST'])
-def command():
-    cmd = request.form['command'].strip().lower()
-    details = request.form['details'].strip()
-    gmail = request.form['gmail'].strip()
-    gmail_pass = request.form['gmail_pass'].strip()
+def parse_command(cmd, details, gmail="", gmail_pass=""):
+    cmd = cmd.strip().lower()
     output = ""
 
     if "email" in cmd:
@@ -148,8 +141,7 @@ def command():
             output = "❌ Format error for email. Use: to,subject,body"
 
     elif "research" in cmd:
-        topic = details
-        output = research_topic(topic)
+        output = research_topic(details)
 
     elif "play song" in cmd:
         output = play_song(details)
@@ -180,14 +172,40 @@ def command():
     else:
         output = "❌ Command not recognized. Try: email, research, reminder, content, finance, play song"
 
+    return output
+
+# ------------------------
+# Flask Routes
+# ------------------------
+@app.route('/', methods=['GET'])
+def index():
+    return HTML_TEMPLATE
+
+@app.route('/command', methods=['POST'])
+def command():
+    cmd = request.form['command']
+    details = request.form['details']
+    gmail = request.form.get('gmail', "")
+    gmail_pass = request.form.get('gmail_pass', "")
+    output = parse_command(cmd, details, gmail, gmail_pass)
     return render_template_string(HTML_TEMPLATE, output=output)
 
 # ------------------------
-# Run Flask App
+# Voice Endpoint for Automation
 # ------------------------
-import os
+@app.route('/voice', methods=['POST'])
+def voice():
+    data = request.json
+    cmd = data.get("command", "")
+    details = data.get("details", "")
+    gmail = data.get("gmail", "")
+    gmail_pass = data.get("gmail_pass", "")
+    output = parse_command(cmd, details, gmail, gmail_pass)
+    return jsonify({"response": output})
 
+# ------------------------
+# Run Flask App (Railway Port Fix)
+# ------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-
+    app.run(host='0.0.0.0', port=port)
