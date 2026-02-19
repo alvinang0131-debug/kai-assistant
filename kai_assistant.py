@@ -1,211 +1,246 @@
-from flask import Flask, render_template_string, request, jsonify
-import smtplib
-from email.message import EmailMessage
-import schedule
-import threading
-import time
-import json
+from flask import Flask, request, jsonify
 import requests
 from bs4 import BeautifulSoup
-import webbrowser
-from datetime import datetime
+import json
 import os
+from datetime import datetime
 
-# ------------------------
-# Flask app setup
-# ------------------------
 app = Flask(__name__)
 
-# ------------------------
-# Memory / Logs
-# ------------------------
-TASK_LOG_FILE = "tasks.json"
+# ===============================
+# Personality System
+# ===============================
+
+MODE = "ceo"
+
+def set_mode(new_mode):
+    global MODE
+    MODE = new_mode.lower()
+
+def kai_personality(text):
+    if MODE == "ceo":
+        prefix = "Andrew, here’s the strategic breakdown:\n\n"
+    elif MODE == "chill":
+        prefix = "Hey Andrew 🙂 here’s what I found:\n\n"
+    elif MODE == "strict":
+        prefix = "Direct response:\n\n"
+    else:
+        prefix = ""
+    return prefix + text + "\n\nLet me know the next move."
+
+# ===============================
+# Memory System
+# ===============================
+
+MEMORY_FILE = "memory.json"
+
+def load_memory():
+    if not os.path.exists(MEMORY_FILE):
+        return []
+    with open(MEMORY_FILE, "r") as f:
+        return json.load(f)
+
+def save_memory(entry):
+    memory = load_memory()
+    memory.append({
+        "timestamp": str(datetime.now()),
+        "entry": entry
+    })
+    with open(MEMORY_FILE, "w") as f:
+        json.dump(memory, f, indent=4)
+
+# ===============================
+# Task System
+# ===============================
+
+TASKS_FILE = "tasks.json"
 
 def load_tasks():
-    try:
-        with open(TASK_LOG_FILE, "r") as f:
-            return json.load(f)
-    except:
+    if not os.path.exists(TASKS_FILE):
         return []
+    with open(TASKS_FILE, "r") as f:
+        return json.load(f)
 
 def save_tasks(tasks):
-    with open(TASK_LOG_FILE, "w") as f:
-        json.dump(tasks, f, indent=2)
+    with open(TASKS_FILE, "w") as f:
+        json.dump(tasks, f, indent=4)
 
-tasks = load_tasks()
-
-# ------------------------
-# Email Function
-# ------------------------
-def send_email(to_email, subject, body, sender_email, sender_password):
-    msg = EmailMessage()
-    msg["From"] = sender_email
-    msg["To"] = to_email
-    msg["Subject"] = subject
-    msg.set_content(body)
+def schedule_task(details):
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-            smtp.login(sender_email, sender_password)
-            smtp.send_message(msg)
-        return f"✅ Hey Andrew, your email to {to_email} has been sent successfully."
-    except Exception as e:
-        return f"❌ Sorry Andrew, I couldn’t send the email. Error: {e}"
+        name, minutes, priority = [x.strip() for x in details.split(",")]
+        tasks = load_tasks()
+        tasks.append({
+            "task": name,
+            "minutes": minutes,
+            "priority": priority.lower(),
+            "created": str(datetime.now())
+        })
+        save_tasks(tasks)
+        save_memory(f"Task scheduled: {name}")
+        return kai_personality(f"Task '{name}' scheduled with {priority} priority.")
+    except:
+        return kai_personality("Format reminder as: TaskName,minutes,priority")
 
-# ------------------------
-# Research Function
-# ------------------------
-def research_topic(topic):
-    url = f"https://en.wikipedia.org/wiki/{topic.replace(' ', '_')}"
+def list_tasks():
+    tasks = load_tasks()
+    if not tasks:
+        return kai_personality("No tasks scheduled.")
+    order = {"high":0,"medium":1,"low":2}
+    tasks = sorted(tasks, key=lambda x: order.get(x["priority"], 1))
+    output = "Current Tasks:\n"
+    for t in tasks:
+        output += f"- {t['task']} ({t['priority']})\n"
+    return kai_personality(output)
+
+# ===============================
+# Research (Multi-Source)
+# ===============================
+
+def research(topic):
     try:
-        response = requests.get(url)
-        soup = BeautifulSoup(response.text, "html.parser")
-        paragraphs = soup.find_all('p')
-        summary = "\n".join([p.text.strip() for p in paragraphs[:3]])
-        return f"Hey Andrew, here’s a quick summary of '{topic}':\n{summary}\n💡 Suggested next steps: check latest news or reports."
-    except Exception as e:
-        return f"❌ Sorry Andrew, I couldn’t fetch research: {e}"
+        summary = ""
 
-# ------------------------
-# Play Song (Browser safe)
-# ------------------------
-def play_song(query):
-    # Return clickable link instead of opening browser
-    return f"🎵 Click to play on YouTube: https://www.youtube.com/results?search_query={query.replace(' ', '+')}"
+        wiki_url = f"https://en.wikipedia.org/wiki/{topic.replace(' ','_')}"
+        r = requests.get(wiki_url)
+        soup = BeautifulSoup(r.text, "html.parser")
+        for p in soup.select("p")[:5]:
+            summary += p.get_text()
 
-# ------------------------
-# Task Scheduler
-# ------------------------
-def schedule_reminder(task_name, delay_seconds, priority="medium"):
-    def reminder():
-        print(f"⏰ [{priority.upper()}] Reminder: {task_name}")
-    schedule.every(delay_seconds).seconds.do(reminder)
-    tasks.append({"task": task_name, "delay": delay_seconds, "priority": priority, "scheduled_at": str(datetime.now())})
-    save_tasks(tasks)
-    return f"✅ Hey Andrew, your reminder '{task_name}' has been scheduled (priority: {priority})."
+        ddg = requests.get(
+            f"https://api.duckduckgo.com/?q={topic}&format=json"
+        ).json()
 
-def run_schedule():
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
+        if ddg.get("AbstractText"):
+            summary += "\n" + ddg["AbstractText"]
 
-threading.Thread(target=run_schedule, daemon=True).start()
+        structured = f"""
+Topic: {topic}
 
-# ------------------------
-# Flask HTML Template
-# ------------------------
-HTML_TEMPLATE = '''
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Kai - Your COO Assistant</title>
-    <style>
-        body { font-family: Arial; background: #f5f5f5; margin: 20px; }
-        input, textarea { width: 100%; margin: 5px 0; padding: 8px; }
-        button { padding: 10px 15px; margin-top: 5px; background: #0077cc; color: white; border: none; cursor: pointer; }
-        .output { background: #fff; padding: 10px; margin-top: 10px; white-space: pre-wrap; border-radius: 5px; }
-    </style>
-</head>
-<body>
-    <h2>🤖 Kai - Your Human-Like COO Assistant</h2>
-    <p>💡 Tip: Tap the input box, press your phone mic, and speak your command!</p>
-    <form method="POST" action="/command">
-        <label>Command:</label>
-        <input type="text" name="command" required placeholder="email, research, reminder, content, finance, play song">
-        <label>Details (comma-separated or JSON-like for email/reminder):</label>
-        <textarea name="details" rows="4" placeholder="Email: to,subject,body | Reminder: task,delay,priority"></textarea>
-        <label>Gmail Email (if needed):</label>
-        <input type="text" name="gmail">
-        <label>Gmail App Password:</label>
-        <input type="password" name="gmail_pass">
-        <button type="submit">Send Command</button>
-    </form>
-    {% if output %}
-    <div class="output">{{ output }}</div>
-    {% endif %}
-</body>
-</html>
-'''
+1. Core Idea:
+{summary[:700]}
 
-# ------------------------
-# Command Parsing Logic
-# ------------------------
-def parse_command(cmd, details, gmail="", gmail_pass=""):
-    cmd = cmd.strip().lower()
-    output = ""
+2. Strategic Impact:
+Understanding this improves decision-making and leverage.
 
-    if "email" in cmd:
-        try:
-            to_email, subject, body = details.split(',', 2)
-            output = send_email(to_email.strip(), subject.strip(), body.strip(), gmail, gmail_pass)
-        except:
-            output = "❌ Format error for email. Use: to,subject,body"
+3. Application:
+Focus on execution and measurable results.
+"""
+        save_memory(f"Research: {topic}")
+        return kai_personality(structured)
 
-    elif "research" in cmd:
-        output = research_topic(details)
+    except:
+        return kai_personality("Research failed for that topic.")
 
-    elif "play song" in cmd:
-        output = play_song(details)
+# ===============================
+# Finance Engine
+# ===============================
 
-    elif "reminder" in cmd or "task" in cmd:
-        try:
-            task_parts = details.split(',')
-            task_name = task_parts[0].strip()
-            delay = int(task_parts[1].strip())
-            priority = task_parts[2].strip() if len(task_parts) > 2 else "medium"
-            output = schedule_reminder(task_name, delay, priority)
-        except:
-            output = "❌ Format error for reminder. Use: task_name,delay_seconds,priority"
+def finance():
+    save_memory("Finance requested")
+    return kai_personality("""
+Financial Optimization Model:
 
-    elif "content" in cmd or "monetize" in cmd:
-        output = ("📌 Content Plan:\n"
-                  "1. Post 3-5 times/week.\n"
-                  "2. Focus on trends in your niche.\n"
-                  "3. Include strong hooks and CTAs.\n"
-                  "4. Track analytics weekly.\n"
-                  "5. Use free editing/scheduling tools.")
+1. Emergency reserve (3–6 months)
+2. Eliminate high-interest debt
+3. Invest consistently
+4. Increase income leverage
+5. Long-term compound strategy
+""")
 
-    elif "finance" in cmd or "invest" in cmd:
-        output = ("💰 Financial Planning:\n"
-                  "Enter your income and expenses via console for calculations in this free prototype.\n"
-                  "Recommendation: save consistently, consider free ETF research sources for TFSA.")
+# ===============================
+# Automation Bridge
+# ===============================
 
-    else:
-        output = "❌ Command not recognized. Try: email, research, reminder, content, finance, play song"
+def call_contact(name):
+    save_memory(f"Call: {name}")
+    return f"CALL_CONTACT:{name}"
 
-    return output
+def text_contact(name, message):
+    save_memory(f"Text: {name}")
+    return f"TEXT_CONTACT:{name}:{message}"
 
-# ------------------------
-# Flask Routes
-# ------------------------
-@app.route('/', methods=['GET'])
-def index():
-    return HTML_TEMPLATE
+def whatsapp_contact(name, message):
+    save_memory(f"WhatsApp: {name}")
+    return f"WHATSAPP_CONTACT:{name}:{message}"
 
-@app.route('/command', methods=['POST'])
-def command():
-    cmd = request.form['command']
-    details = request.form['details']
-    gmail = request.form.get('gmail', "")
-    gmail_pass = request.form.get('gmail_pass', "")
-    output = parse_command(cmd, details, gmail, gmail_pass)
-    return render_template_string(HTML_TEMPLATE, output=output)
+def navigate(place):
+    save_memory(f"Navigate: {place}")
+    return f"NAVIGATE:{place}"
 
-# ------------------------
-# Voice Endpoint for Automation
-# ------------------------
+def spotify(song):
+    save_memory(f"Spotify: {song}")
+    return f"SPOTIFY_PLAY:{song}"
+
+def emergency_confirm():
+    save_memory("Emergency requested")
+    return "EMERGENCY_CONFIRM"
+
+# ===============================
+# Routes
+# ===============================
+
+@app.route('/')
+def home():
+    return "Kai Ultimate Automation Assistant is running."
+
 @app.route('/voice', methods=['POST'])
 def voice():
     data = request.json
-    cmd = data.get("command", "")
-    details = data.get("details", "")
-    gmail = data.get("gmail", "")
-    gmail_pass = data.get("gmail_pass", "")
-    output = parse_command(cmd, details, gmail, gmail_pass)
-    return jsonify({"response": output})
+    command = data.get("command","").lower().strip()
 
-# ------------------------
-# Run Flask App (Railway Port Fix)
-# ------------------------
+    if "research" in command:
+        topic = command.replace("research","").strip()
+        return jsonify({"response": research(topic)})
+
+    elif "finance" in command:
+        return jsonify({"response": finance()})
+
+    elif "reminder" in command:
+        details = command.replace("reminder","").strip()
+        return jsonify({"response": schedule_task(details)})
+
+    elif "list tasks" in command:
+        return jsonify({"response": list_tasks()})
+
+    elif "mode" in command:
+        mode = command.replace("mode","").strip()
+        set_mode(mode)
+        return jsonify({"response": kai_personality(f"Mode switched to {mode}.")})
+
+    elif "call" in command:
+        name = command.replace("call","").strip()
+        return jsonify({"response": call_contact(name)})
+
+    elif "text" in command:
+        parts = command.replace("text","").strip().split(" ",1)
+        if len(parts) == 2:
+            return jsonify({"response": text_contact(parts[0], parts[1])})
+
+    elif "whatsapp" in command:
+        parts = command.replace("whatsapp","").strip().split(" ",1)
+        if len(parts) == 2:
+            return jsonify({"response": whatsapp_contact(parts[0], parts[1])})
+
+    elif "navigate" in command:
+        place = command.replace("navigate","").strip()
+        return jsonify({"response": navigate(place)})
+
+    elif "spotify" in command:
+        song = command.replace("spotify","").strip()
+        return jsonify({"response": spotify(song)})
+
+    elif "emergency" in command:
+        return jsonify({"response": emergency_confirm()})
+
+    else:
+        return jsonify({"response": kai_personality(
+            "Command recognized but not categorized. Try research, finance, reminder, call, text, whatsapp, navigate, spotify."
+        )})
+
+# ===============================
+# Run
+# ===============================
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    port = int(os.environ.get("PORT",8080))
+    app.run(host="0.0.0.0", port=port)
