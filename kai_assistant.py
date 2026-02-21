@@ -1,191 +1,188 @@
-from flask import Flask, request
-from flask_cors import CORS
-import requests
-from bs4 import BeautifulSoup
+from flask import Flask, request, jsonify
 import json
-import os
-import random
+import schedule
+import threading
+import time
 from datetime import datetime
+import webbrowser
+import smtplib
+from email.message import EmailMessage
+import random
 
 app = Flask(__name__)
-CORS(app)
 
-# ===============================
-# GLOBALS
-# ===============================
-MODE = "ceo"
-MEMORY_FILE = "memory.json"
-TASKS_FILE = "tasks.json"
+# -------------------------
+# Memory / Task Storage
+# -------------------------
+MEMORY_FILE = "kai_memory.json"
 
-# ===============================
-# MEMORY
-# ===============================
 def load_memory():
-    if not os.path.exists(MEMORY_FILE):
-        return []
-    with open(MEMORY_FILE, "r") as f:
-        return json.load(f)
+    try:
+        with open(MEMORY_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {"tasks": [], "notes": []}
 
-def save_memory(entry):
-    memory = load_memory()
-    memory.append({
-        "time": str(datetime.now()),
-        "entry": entry
-    })
+def save_memory(memory):
     with open(MEMORY_FILE, "w") as f:
-        json.dump(memory, f, indent=4)
+        json.dump(memory, f, indent=2)
 
-# ===============================
-# PERSONALITY / HUMOR / EMOTION
-# ===============================
-def set_mode(new_mode):
-    global MODE
-    MODE = new_mode.lower()
+memory = load_memory()
 
-def personality_wrap(text):
-    styles = {
-        "ceo": ["Andrew, here’s the strategic breakdown.","Let’s analyze this properly."],
-        "chill": ["Alright Andrew, here’s what I found.","Okay, so here’s the deal."],
-        "strict": ["Direct response.","Concise answer."],
-        "humor": ["Activating big brain mode.","Let’s cook something intelligent."],
-        "empathetic": ["Hey Andrew, I’ve got you.","Let’s walk through this calmly."],
-        "briefing": ["Executive briefing:"],
-        "whisper": ["Lowering voice. Here’s the update."]
-    }
-    opener = random.choice(styles.get(MODE, ["Here’s the response."]))
-    if MODE == "briefing":
-        return f"{opener}\n{text}"
-    return f"{opener}\n\n{text}\n\n... \n\nWhat’s the next move?"
+# -------------------------
+# Scheduler
+# -------------------------
+def schedule_reminder(task_name, delay_seconds, priority="medium"):
+    def reminder():
+        print(f"⏰ [{priority.upper()}] Reminder: {task_name}")
+    schedule.every(delay_seconds).seconds.do(reminder)
+    memory["tasks"].append({
+        "task": task_name,
+        "delay": delay_seconds,
+        "priority": priority,
+        "scheduled_at": str(datetime.now())
+    })
+    save_memory(memory)
+    return f"✅ Reminder '{task_name}' scheduled (priority: {priority})"
 
-# ===============================
-# TASK SYSTEM
-# ===============================
-def load_tasks():
-    if not os.path.exists(TASKS_FILE):
-        return []
-    with open(TASKS_FILE, "r") as f:
-        return json.load(f)
+def run_schedule():
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
 
-def save_tasks(tasks):
-    with open(TASKS_FILE, "w") as f:
-        json.dump(tasks, f, indent=4)
+threading.Thread(target=run_schedule, daemon=True).start()
 
-def schedule_task(details):
+# -------------------------
+# Email
+# -------------------------
+def send_email(to_email, subject, body, sender_email, sender_password):
+    msg = EmailMessage()
+    msg["From"] = sender_email
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.set_content(body)
     try:
-        name, minutes, priority = [x.strip() for x in details.split(",")]
-        tasks = load_tasks()
-        tasks.append({"task": name,"minutes": minutes,"priority": priority,"created": str(datetime.now())})
-        save_tasks(tasks)
-        save_memory(f"Task scheduled: {name}")
-        return personality_wrap(f"Task '{name}' scheduled with {priority} priority.")
-    except:
-        return personality_wrap("Format: task,minutes,priority")
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+            smtp.login(sender_email, sender_password)
+            smtp.send_message(msg)
+        return f"✅ Email to {to_email} sent."
+    except Exception as e:
+        return f"❌ Email failed: {e}"
 
-def list_tasks():
-    tasks = load_tasks()
-    if not tasks:
-        return personality_wrap("No tasks scheduled.")
-    output = "Current tasks:\n"
-    for t in tasks:
-        output += f"- {t['task']} ({t['priority']})\n"
-    return personality_wrap(output)
+# -------------------------
+# Research
+# -------------------------
+def research_topic(topic):
+    # Placeholder: can be extended with ChatGPT free web scraping
+    search_engines = ["Wikipedia", "DuckDuckGo"]
+    engine = random.choice(search_engines)
+    return f"🧠 Researching '{topic}' using {engine} (mock summary)."
 
-# ===============================
-# RESEARCH
-# ===============================
-def research(topic):
-    try:
-        summary = ""
-        wiki = requests.get(f"https://en.wikipedia.org/wiki/{topic.replace(' ','_')}")
-        soup = BeautifulSoup(wiki.text, "html.parser")
-        for p in soup.select("p")[:4]:
-            summary += p.get_text()
-        summary = summary[:800]
-        save_memory(f"Research: {topic}")
-        return personality_wrap(summary)
-    except:
-        return personality_wrap("Research failed.")
+# -------------------------
+# Play Music
+# -------------------------
+def play_song(query):
+    webbrowser.open(f"https://www.youtube.com/results?search_query={query}")
+    return f"🎵 Playing '{query}' on YouTube."
 
-# ===============================
-# AUTOMATION (RAW RETURN FOR TASKER)
-# ===============================
-def call_contact(name):
-    save_memory(f"Call: {name}")
-    return f"CALL_CONTACT:{name}"
+# -------------------------
+# Emotional / Personality
+# -------------------------
+PERSONALITY_MODES = ["ceo","chill","strict","humor","empathetic","briefing","whisper"]
 
-def text_contact(name, message):
-    save_memory(f"Text: {name}")
-    return f"TEXT_CONTACT:{name}:{message}"
+def tone_response(message, mode="ceo"):
+    if mode=="humor":
+        return f"{message} 😎"
+    elif mode=="whisper":
+        return f"{message.lower()}…"
+    elif mode=="briefing":
+        return f"{message} (summary)"
+    elif mode=="empathetic":
+        return f"{message} 💛"
+    elif mode=="chill":
+        return f"{message} ✌️"
+    elif mode=="strict":
+        return f"{message.upper()}!"
+    else:
+        return message
 
-def whatsapp_contact(name, message):
-    save_memory(f"WhatsApp: {name}")
-    return f"WHATSAPP_CONTACT:{name}:{message}"
-
-def navigate(place):
-    save_memory(f"Navigate: {place}")
-    return f"NAVIGATE:{place}"
-
-def spotify(song):
-    save_memory(f"Spotify: {song}")
-    return f"SPOTIFY_PLAY:{song}"
-
-def emergency():
-    save_memory("Emergency triggered")
-    return "EMERGENCY_CONFIRM"
-
-# ===============================
-# VOICE ROUTE
-# ===============================
+# -------------------------
+# Voice Endpoint
+# -------------------------
 @app.route("/voice", methods=["POST"])
 def voice():
-    data = request.json
-    command = data.get("command","").lower().strip()
+    data = request.get_json()
+    command_raw = data.get("command","").lower()
+    personality = data.get("mode","ceo").lower()
+    personality = personality if personality in PERSONALITY_MODES else "ceo"
 
-    # Emotional trigger
-    if any(word in command for word in ["tired","stressed","overwhelmed"]):
-        set_mode("empathetic")
+    # Call
+    if "call" in command_raw:
+        contact = command_raw.replace("call","").strip()
+        return jsonify({"response": f"CALL_CONTACT:{contact}"})
+    
+    # Text
+    elif "text" in command_raw:
+        parts = command_raw.replace("text","").split(":",1)
+        contact = parts[0].strip()
+        message = parts[1].strip() if len(parts)>1 else " "
+        return jsonify({"response": f"TEXT_CONTACT:{contact}:{message}"})
+    
+    # WhatsApp
+    elif "whatsapp" in command_raw:
+        parts = command_raw.replace("whatsapp","").split(":",1)
+        contact = parts[0].strip()
+        message = parts[1].strip() if len(parts)>1 else " "
+        return jsonify({"response": f"WHATSAPP_CONTACT:{contact}:{message}"})
+    
+    # Navigate
+    elif "navigate" in command_raw:
+        place = command_raw.replace("navigate","").strip()
+        return jsonify({"response": f"NAVIGATE:{place}"})
+    
+    # Play music
+    elif "play song" in command_raw or "play music" in command_raw:
+        song = command_raw.replace("play song","").replace("play music","").strip()
+        msg = play_song(song)
+        return jsonify({"response": f"SPOTIFY_PLAY:{song}"})
+    
+    # Alarm
+    elif "alarm" in command_raw or "set alarm" in command_raw:
+        time_part = command_raw.replace("alarm","").replace("set alarm","").strip()
+        return jsonify({"response": f"ALARM:{time_part}"})
+    
+    # Emergency
+    elif "emergency" in command_raw:
+        return jsonify({"response":"EMERGENCY_CONFIRM:TRUE"})
+    
+    # Reminder
+    elif "reminder" in command_raw or "task" in command_raw:
+        try:
+            parts = command_raw.split(",")
+            task_name = parts[0].strip()
+            delay = int(parts[1].strip())
+            priority = parts[2].strip() if len(parts)>2 else "medium"
+            result = schedule_reminder(task_name, delay, priority)
+            return jsonify({"response": tone_response(result, personality)})
+        except:
+            return jsonify({"response":"ERROR: Format reminder as task_name,delay_seconds,priority"})
+    
+    # Research
+    elif "research" in command_raw:
+        topic = command_raw.replace("research","").strip()
+        result = research_topic(topic)
+        return jsonify({"response": tone_response(result, personality)})
+    
+    # Email
+    elif "email" in command_raw:
+        return jsonify({"response":"EMAIL: Use Gmail credentials to send (mock placeholder)."})
+    
+    # Default
+    else:
+        return jsonify({"response": tone_response(f"🤖 Kai received: {command_raw}", personality)})
 
-    # Mode change
-    if command.startswith("mode"):
-        mode = command.replace("mode","").strip()
-        set_mode(mode)
-        return f"Mode switched to {mode}"
-
-    # Automation
-    if command.startswith("call"):
-        return call_contact(command.replace("call","").strip())
-    if command.startswith("text"):
-        parts = command.replace("text","").strip().split(" ",1)
-        if len(parts)==2:
-            return text_contact(parts[0], parts[1])
-    if command.startswith("whatsapp"):
-        parts = command.replace("whatsapp","").strip().split(" ",1)
-        if len(parts)==2:
-            return whatsapp_contact(parts[0], parts[1])
-    if command.startswith("navigate"):
-        return navigate(command.replace("navigate","").strip())
-    if command.startswith("spotify"):
-        return spotify(command.replace("spotify","").strip())
-    if command.startswith("emergency"):
-        return emergency()
-
-    # Intelligence
-    if command.startswith("research"):
-        return research(command.replace("research","").strip())
-    if command.startswith("finance"):
-        return personality_wrap(
-            "Financial model:\n1. Emergency fund\n2. Remove debt\n3. Invest\n4. Increase income\n5. Compound long-term."
-        )
-    if command.startswith("reminder"):
-        return schedule_task(command.replace("reminder","").strip())
-    if command.startswith("list tasks"):
-        return list_tasks()
-
-    return personality_wrap("Command recognized but not categorized.")
-
-# ===============================
-# RUN SERVER
-# ===============================
-if __name__ == "__main__":
-    port = 5000
-    app.run(host="0.0.0.0", port=port)
+# -------------------------
+# Run App
+# -------------------------
+if __name__=="__main__":
+    app.run(host="0.0.0.0", port=5000)
