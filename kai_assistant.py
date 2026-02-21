@@ -13,6 +13,13 @@ import os  # Railway port fix
 app = Flask(__name__)
 
 # -------------------------
+# Root route for Railway
+# -------------------------
+@app.route("/", methods=["GET"])
+def index():
+    return "Kai Ultimate Assistant is running"
+
+# -------------------------
 # Memory / Task Storage
 # -------------------------
 MEMORY_FILE = "kai_memory.json"
@@ -86,7 +93,7 @@ def play_song(query):
     return f"🎵 Playing '{query}' on YouTube."
 
 # -------------------------
-# Emotional / Personality
+# Personality / Emotional
 # -------------------------
 PERSONALITY_MODES = ["ceo","chill","strict","humor","empathetic","briefing","whisper"]
 
@@ -173,11 +180,11 @@ def voice():
         result = research_topic(topic)
         return jsonify({"response": tone_response(result, personality)})
     
-    # Email
+    # Email placeholder
     elif "email" in command_raw:
         return jsonify({"response":"EMAIL: Use Gmail credentials to send (mock placeholder)."})
     
-    # Default
+    # Default response
     else:
         return jsonify({"response": tone_response(f"🤖 Kai received: {command_raw}", personality)})
 
