@@ -8,6 +8,7 @@ import webbrowser
 import smtplib
 from email.message import EmailMessage
 import random
+import os  # Railway port fix
 
 app = Flask(__name__)
 
@@ -73,7 +74,6 @@ def send_email(to_email, subject, body, sender_email, sender_password):
 # Research
 # -------------------------
 def research_topic(topic):
-    # Placeholder: can be extended with ChatGPT free web scraping
     search_engines = ["Wikipedia", "DuckDuckGo"]
     engine = random.choice(search_engines)
     return f"🧠 Researching '{topic}' using {engine} (mock summary)."
@@ -185,4 +185,5 @@ def voice():
 # Run App
 # -------------------------
 if __name__=="__main__":
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
