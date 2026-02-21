@@ -1,38 +1,26 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request
+from flask_cors import CORS
 import requests
 from bs4 import BeautifulSoup
 import json
 import os
+import random
 from datetime import datetime
 
 app = Flask(__name__)
+CORS(app)
 
 # ===============================
-# Personality System
+# GLOBAL MODE
 # ===============================
 
 MODE = "ceo"
-
-def set_mode(new_mode):
-    global MODE
-    MODE = new_mode.lower()
-
-def kai_personality(text):
-    if MODE == "ceo":
-        prefix = "Andrew, here’s the strategic breakdown:\n\n"
-    elif MODE == "chill":
-        prefix = "Hey Andrew 🙂 here’s what I found:\n\n"
-    elif MODE == "strict":
-        prefix = "Direct response:\n\n"
-    else:
-        prefix = ""
-    return prefix + text + "\n\nLet me know the next move."
-
-# ===============================
-# Memory System
-# ===============================
-
 MEMORY_FILE = "memory.json"
+TASKS_FILE = "tasks.json"
+
+# ===============================
+# MEMORY SYSTEM
+# ===============================
 
 def load_memory():
     if not os.path.exists(MEMORY_FILE):
@@ -43,17 +31,61 @@ def load_memory():
 def save_memory(entry):
     memory = load_memory()
     memory.append({
-        "timestamp": str(datetime.now()),
+        "time": str(datetime.now()),
         "entry": entry
     })
     with open(MEMORY_FILE, "w") as f:
         json.dump(memory, f, indent=4)
 
 # ===============================
-# Task System
+# PERSONALITY ENGINE
 # ===============================
 
-TASKS_FILE = "tasks.json"
+def set_mode(new_mode):
+    global MODE
+    MODE = new_mode.lower()
+
+def personality_wrap(text):
+
+    styles = {
+        "ceo": [
+            "Andrew, here’s the strategic breakdown.",
+            "Let’s analyze this properly.",
+        ],
+        "chill": [
+            "Alright Andrew, here’s what I found.",
+            "Okay, so here’s the deal.",
+        ],
+        "strict": [
+            "Direct response.",
+            "Concise answer.",
+        ],
+        "humor": [
+            "Alright, activating big brain mode.",
+            "Okay Andrew, let’s cook something intelligent.",
+        ],
+        "empathetic": [
+            "Hey Andrew, I’ve got you.",
+            "Let’s walk through this calmly.",
+        ],
+        "briefing": [
+            "Executive briefing:",
+        ],
+        "whisper": [
+            "Lowering voice. Here’s the update.",
+        ]
+    }
+
+    opener = random.choice(styles.get(MODE, ["Here’s the response."]))
+
+    if MODE == "briefing":
+        return f"{opener}\n{text}"
+
+    return f"{opener}\n\n{text}\n\n... \n\nWhat’s the next move?"
+
+# ===============================
+# TASK SYSTEM
+# ===============================
 
 def load_tasks():
     if not os.path.exists(TASKS_FILE):
@@ -72,83 +104,46 @@ def schedule_task(details):
         tasks.append({
             "task": name,
             "minutes": minutes,
-            "priority": priority.lower(),
+            "priority": priority,
             "created": str(datetime.now())
         })
         save_tasks(tasks)
         save_memory(f"Task scheduled: {name}")
-        return kai_personality(f"Task '{name}' scheduled with {priority} priority.")
+        return personality_wrap(f"Task '{name}' scheduled with {priority} priority.")
     except:
-        return kai_personality("Format reminder as: TaskName,minutes,priority")
+        return personality_wrap("Format: task,minutes,priority")
 
 def list_tasks():
     tasks = load_tasks()
     if not tasks:
-        return kai_personality("No tasks scheduled.")
-    order = {"high":0,"medium":1,"low":2}
-    tasks = sorted(tasks, key=lambda x: order.get(x["priority"], 1))
-    output = "Current Tasks:\n"
+        return personality_wrap("No tasks scheduled.")
+    output = "Current tasks:\n"
     for t in tasks:
         output += f"- {t['task']} ({t['priority']})\n"
-    return kai_personality(output)
+    return personality_wrap(output)
 
 # ===============================
-# Research (Multi-Source)
+# RESEARCH ENGINE
 # ===============================
 
 def research(topic):
     try:
         summary = ""
-
-        wiki_url = f"https://en.wikipedia.org/wiki/{topic.replace(' ','_')}"
-        r = requests.get(wiki_url)
-        soup = BeautifulSoup(r.text, "html.parser")
-        for p in soup.select("p")[:5]:
+        wiki = requests.get(f"https://en.wikipedia.org/wiki/{topic.replace(' ','_')}")
+        soup = BeautifulSoup(wiki.text, "html.parser")
+        for p in soup.select("p")[:4]:
             summary += p.get_text()
 
-        ddg = requests.get(
-            f"https://api.duckduckgo.com/?q={topic}&format=json"
-        ).json()
+        summary = summary[:800]
 
-        if ddg.get("AbstractText"):
-            summary += "\n" + ddg["AbstractText"]
-
-        structured = f"""
-Topic: {topic}
-
-1. Core Idea:
-{summary[:700]}
-
-2. Strategic Impact:
-Understanding this improves decision-making and leverage.
-
-3. Application:
-Focus on execution and measurable results.
-"""
         save_memory(f"Research: {topic}")
-        return kai_personality(structured)
+        return personality_wrap(summary)
 
     except:
-        return kai_personality("Research failed for that topic.")
+        return personality_wrap("Research failed.")
 
 # ===============================
-# Finance Engine
-# ===============================
-
-def finance():
-    save_memory("Finance requested")
-    return kai_personality("""
-Financial Optimization Model:
-
-1. Emergency reserve (3–6 months)
-2. Eliminate high-interest debt
-3. Invest consistently
-4. Increase income leverage
-5. Long-term compound strategy
-""")
-
-# ===============================
-# Automation Bridge
+# AUTOMATION (RAW OUTPUT)
 # ===============================
 
 def call_contact(name):
@@ -171,74 +166,71 @@ def spotify(song):
     save_memory(f"Spotify: {song}")
     return f"SPOTIFY_PLAY:{song}"
 
-def emergency_confirm():
-    save_memory("Emergency requested")
+def emergency():
+    save_memory("Emergency triggered")
     return "EMERGENCY_CONFIRM"
 
 # ===============================
-# Routes
+# VOICE ROUTE
 # ===============================
 
-@app.route('/')
-def home():
-    return "Kai Ultimate Automation Assistant is running."
-
-@app.route('/voice', methods=['POST'])
+@app.route("/voice", methods=["POST"])
 def voice():
     data = request.json
     command = data.get("command","").lower().strip()
 
-    if "research" in command:
-        topic = command.replace("research","").strip()
-        return jsonify({"response": research(topic)})
+    # Emotion detection
+    if any(word in command for word in ["tired","stressed","overwhelmed"]):
+        set_mode("empathetic")
 
-    elif "finance" in command:
-        return jsonify({"response": finance()})
-
-    elif "reminder" in command:
-        details = command.replace("reminder","").strip()
-        return jsonify({"response": schedule_task(details)})
-
-    elif "list tasks" in command:
-        return jsonify({"response": list_tasks()})
-
-    elif "mode" in command:
+    # Mode change
+    if command.startswith("mode"):
         mode = command.replace("mode","").strip()
         set_mode(mode)
-        return jsonify({"response": kai_personality(f"Mode switched to {mode}.")})
+        return f"Mode switched to {mode}"
 
-    elif "call" in command:
-        name = command.replace("call","").strip()
-        return jsonify({"response": call_contact(name)})
+    # Automation (RAW RETURN)
+    if command.startswith("call"):
+        return call_contact(command.replace("call","").strip())
 
-    elif "text" in command:
+    if command.startswith("text"):
         parts = command.replace("text","").strip().split(" ",1)
-        if len(parts) == 2:
-            return jsonify({"response": text_contact(parts[0], parts[1])})
+        if len(parts)==2:
+            return text_contact(parts[0], parts[1])
 
-    elif "whatsapp" in command:
+    if command.startswith("whatsapp"):
         parts = command.replace("whatsapp","").strip().split(" ",1)
-        if len(parts) == 2:
-            return jsonify({"response": whatsapp_contact(parts[0], parts[1])})
+        if len(parts)==2:
+            return whatsapp_contact(parts[0], parts[1])
 
-    elif "navigate" in command:
-        place = command.replace("navigate","").strip()
-        return jsonify({"response": navigate(place)})
+    if command.startswith("navigate"):
+        return navigate(command.replace("navigate","").strip())
 
-    elif "spotify" in command:
-        song = command.replace("spotify","").strip()
-        return jsonify({"response": spotify(song)})
+    if command.startswith("spotify"):
+        return spotify(command.replace("spotify","").strip())
 
-    elif "emergency" in command:
-        return jsonify({"response": emergency_confirm()})
+    if command.startswith("emergency"):
+        return emergency()
 
-    else:
-        return jsonify({"response": kai_personality(
-            "Command recognized but not categorized. Try research, finance, reminder, call, text, whatsapp, navigate, spotify."
-        )})
+    # Intelligence
+    if command.startswith("research"):
+        return research(command.replace("research","").strip())
+
+    if command.startswith("finance"):
+        return personality_wrap(
+            "Financial model:\n1. Emergency fund\n2. Remove debt\n3. Invest\n4. Increase income\n5. Compound long-term."
+        )
+
+    if command.startswith("reminder"):
+        return schedule_task(command.replace("reminder","").strip())
+
+    if command.startswith("list tasks"):
+        return list_tasks()
+
+    return personality_wrap("Command recognized but not categorized.")
 
 # ===============================
-# Run
+# RUN
 # ===============================
 
 if __name__ == "__main__":
